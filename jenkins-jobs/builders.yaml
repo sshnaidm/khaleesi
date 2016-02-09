@@ -269,6 +269,124 @@
                 fi
                 exit $result
 
+- builder:
+    name: ksgen-builder-rdo-manager-quickstart
+    builders:
+        - shining-panda:
+            build-environment: virtualenv
+            python-version: system-CPython-2.7
+            nature: shell
+            clear: false
+            use-distribute: true
+            system-site-packages: false
+            ignore-exit-code: false
+            command: |
+                pip install -U ansible==1.9.2 > ansible_build; ansible --version
+
+                # install ksgen
+                pushd khaleesi/tools/ksgen
+                python setup.py install
+                popd
+
+                # Prepare config
+                pushd khaleesi
+                cp ansible.cfg.example ansible.cfg
+                touch ssh.config.ansible
+                echo "" >> ansible.cfg
+                echo "[ssh_connection]" >> ansible.cfg
+                echo "ssh_args = -F ssh.config.ansible" >> ansible.cfg
+
+                # fetch dependent gating changes
+                if [ $GERRIT_CHANGE_COMMIT_MESSAGE ]; then
+                    ansible-playbook -i local_hosts -vv playbooks/depends-on.yml
+                fi
+
+                # get config for centos
+                curl -O https://trown.fedorapeople.org/provision_centos_settings.yml
+                sed -i "s%/home/rhos-ci/workspace/trown-poc-quickstart-gate-ha%$WORKSPACE%" provision_centos_settings.yml
+
+                # get node
+                set +e
+                anscmd="stdbuf -oL -eL ansible-playbook -vv"
+                $anscmd -i local_hosts playbooks/provision.yml --extra-vars @provision_centos_settings.yml
+                popd
+
+                # Install tripleo-quickstart
+                pip install -e tripleo-quickstart
+                pushd tripleo-quickstart
+                git log -n 5 --oneline
+                python setup.py install
+                popd
+
+                # Setup environment with tripleo-quickstart
+                pushd khaleesi
+                $anscmd -i hosts $WORKSPACE/tripleo-quickstart/playbooks/libvirt-setup.yml \
+                    --extra-vars url="http://artifacts.ci.centos.org/artifacts/rdo/images/{product-version}/{product-version-repo}/{images_version}/undercloud.qcow2" \
+                    --extra-vars local_working_dir=$WORKSPACE/khaleesi
+
+                result=$?
+                infra_result=0
+
+                # generate config
+                ksgen --config-dir=settings generate \
+                    --provisioner=manual \
+                    --product={product} \
+                    --product-version={product-version} \
+                    --product-version-build={pin} \
+                    --product-version-repo={product-version-repo} \
+                    --distro={distro} \
+                    --installer={installer} \
+                    --installer-deploy={installer-deploy} \
+                    --installer-env={installer-env} \
+                    --installer-images={installer-images} \
+                    --installer-network={network} \
+                    --installer-network-isolation={network-isolation} \
+                    --installer-network-variant={network-variant} \
+                    --installer-post_action={installer-post_action} \
+                    --installer-topology={installer-topology} \
+                    --installer-tempest={installer-tempest} \
+                    --installer-tempest_skip_file=rdoci-{product}-{product-version}-{installer} \
+                    --workarounds=enabled \
+                    --extra-vars @../khaleesi-settings/hardware_environments/virt/network_configs/{network-isolation}/hw_settings.yml \
+                    ksgen_settings.yml
+
+                $anscmd -i hosts --extra-vars @ksgen_settings.yml playbooks/installer/rdo-manager/undercloud/main.yml
+                $anscmd -i hosts --extra-vars @ksgen_settings.yml playbooks/installer/rdo-manager/images/main.yml
+                $anscmd -i hosts --extra-vars @ksgen_settings.yml playbooks/installer/rdo-manager/overcloud/main.yml
+
+                result=$?
+                if [[ "$result" = "0" ]]; then
+                    $anscmd -i hosts playbooks/installer/rdo-manager/overcloud-virt-fencing.yml \
+                    --extra-vars @provision_centos_settings.yml --extra-vars @ksgen_settings.yml
+                    result=$?
+                fi
+
+                if [[ "$result" = "0" ]]; then
+                    $anscmd -i hosts playbooks/installer/rdo-manager/overcloud-validate.yml \
+                    --extra-vars @provision_centos_settings.yml --extra-vars @ksgen_settings.yml
+                    result=$?
+                fi
+
+                if [[ "$result" = "0" ]]; then
+                    $anscmd -i hosts playbooks/installer/rdo-manager/overcloud-test.yml \
+                    --extra-vars @provision_centos_settings.yml --extra-vars @ksgen_settings.yml
+                    result=$?
+                fi
+
+                infra_result=0
+                $anscmd -i hosts --extra-vars @provision_centos_settings.yml playbooks/collect_logs.yml &> collect_logs.txt || infra_result=1
+                $anscmd -i local_hosts --extra-vars @provision_centos_settings.yml playbooks/cleanup.yml &> cleanup.txt || infra_result=2
+
+                if [[ "$infra_result" != "0" && "$result" = "0" ]]; then
+                    # if the job/test was ok, but collect_logs/cleanup failed,
+                    # print out why the job is going to be marked as failed
+                    result=$infra_result
+                    cat collect_logs.txt
+                    cat cleanup.txt
+                fi
+                exit $result
+
+
 
 - builder:
     name: ksgen-builder-packstack

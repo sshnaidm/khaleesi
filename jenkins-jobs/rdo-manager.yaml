@@ -231,5 +231,53 @@
             product-version-repo: production
             pin: latest
 
+- job-template:
+    name: 'tripleo-quickstart-{installer}-{product}-{product-version}'
+    defaults: rdo-manager-defaults
+    triggers:
+        - periodic-trigger
+    scm:
+        - repo-tripleo-quickstart
+        - repo-khaleesi
+        - repo-khaleesi-settings
+    builders:
+        - ksgen-builder-rdo-manager-quickstart:
+            product: '{product}'
+            product-version: '{product-version}'
+            product-version-repo: '{product-version-repo}'
+            distro: '{distro}'
+            installer: '{installer}'
+            installer-deploy: '{installer-deploy}'
+            installer-env: '{installer-env}'
+            installer-images: '{installer-images}'
+            installer-post_action: '{installer-post_action}'
+            installer-topology: '{installer-topology}'
+            installer-tempest: '{installer-tempest}'
+            network: '{network}'
+            network-isolation: '{network-isolation}'
+            network-variant: '{network-variant}'
+            pin: '{pin}'
+            images_version: '{images_version}'
 
-
+- project:
+    name: tripleo-quickstart-khaleesi-jobs
+    installer: rdo_manager
+    installer-deploy: templates
+    installer-env: virthost
+    installer-images: import
+    installer-post_action: none
+    installer-topology: minimal_no_ceph
+    installer-tempest: smoke
+    network: neutron
+    network-isolation: none
+    network-variant: ml2-vxlan
+    product: rdo
+    product-version: liberty
+    product-version-repo: delorean
+    distro: centos-7.0
+    provisioner-distro: centos
+    provisioner-distro-version: 7
+    pin: last_known_good
+    images_version: stable
+    jobs:
+        - 'tripleo-quickstart-{installer}-{product}-{product-version}'
