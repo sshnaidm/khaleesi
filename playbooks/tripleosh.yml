@@ -1,0 +1,37 @@
+---
+- include: provision.yml
+- include: installer/{{ installer.type }}/environment-setup/main.yml
+
+- name: Run tripleosh on the host
+  hosts: undercloud
+  vars:
+    tripleosh_git: https://github.com/sshnaidm/tripleo-ci.git
+  environment:
+    EPEL_MIRROR: http://dl.fedoraproject.org/pub/epel
+    CENTOS_MIRROR: http://mirror.centos.org/centos
+    FEDORA_MIRROR: http://dl.fedoraproject.org/pub/fedora/linux
+    NODECOUNT: 2
+    INTROSPECT: 1
+    PACEMAKER: 0
+    OVERCLOUD_DEPLOY_ARGS: "--libvirt-type=qemu"
+    NETISO_V4: 1
+  tasks:
+    - name: clone tripleosh
+      git: repo={{ tripleosh_git }} dest={{ instack_user_home }}/tripleo-ci force=yes
+
+    - name: Run tripleo.sh
+      shell: >
+        rm -rf /etc/yum.repos.d/rdo-*;
+        /usr/bin/bash {{ instack_user_home }}/tripleo-ci/scripts/tripleo.sh --repo-setup;
+        sudo yum clean all;
+        sudo yum repolist;
+        /usr/bin/bash {{ instack_user_home }}/tripleo-ci/scripts/tripleo.sh --undercloud;
+        /usr/bin/bash {{ instack_user_home }}/tripleo-ci/scripts/tripleo.sh --overcloud-images;
+        /usr/bin/bash {{ instack_user_home }}/tripleo-ci/scripts/tripleo.sh --register-nodes;
+        /usr/bin/bash {{ instack_user_home }}/tripleo-ci/scripts/tripleo.sh --introspect-nodes;
+        /usr/bin/bash {{ instack_user_home }}/tripleo-ci/scripts/tripleo.sh --overcloud-deploy;
+        /usr/bin/bash {{ instack_user_home }}/tripleo-ci/scripts/tripleo.sh --tempest-run;
+      ignore_errors: yes
+
+    - name: Fetch xml to host
+      fetch: src={{ instack_user_home }}/tempest/tempest.xml dest={{ base_dir }}/khaleesi/nosetests.xml flat=yes
